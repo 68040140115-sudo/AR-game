@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Decimal Hero AR - เจ้าแห่งทศนิยมพิชิตมิติ AR</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts: Prompt & Chakra Petch -->
+    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700;800&family=Prompt:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <!-- MediaPipe Pose and Camera Utils -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            font-family: 'Prompt', sans-serif;
+            background-color: #0b0f19;
+            color: #ffffff;
+            overflow: hidden;
+            user-select: none;
+        }
+        .font-cyber {
+            font-family: 'Chakra Petch', sans-serif;
+        }
+        /* Glassmorphic elements */
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+        .glass-button {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.4), rgba(147, 51, 234, 0.4));
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            transition: all 0.2s ease;
+        }
+        .glass-button:hover {
+            transform: translateY(-2px) scale(1.02);
+            box-shadow: 0 0 20px rgba(59, 130, 246, 0.6);
+        }
+        /* Neon Glow Effects */
+        .glow-blue { box-shadow: 0 0 15px #3b82f6, inset 0 0 10px #3b82f6; }
+        .glow-yellow { box-shadow: 0 0 15px #eab308, inset 0 0 10px #eab308; }
+        .glow-green { box-shadow: 0 0 15px #22c55e, inset 0 0 10px #22c55e; }
+        .glow-orange { box-shadow: 0 0 15px #f97316, inset 0 0 10px #f97316; }
+        
+        /* Mirror video transform */
+        .mirror {
+            transform: scaleX(-1);
+        }
+        /* Custom animations */
+        @keyframes float {
+            0%, 100% { transform: translateY(0px) rotate(0deg); }
+            50% { transform: translateY(-10px) rotate(3deg); }
+        }
+        .animate-float {
+            animation: float 3s ease-in-out infinite;
+        }
+        @keyframes pulse-glow {
+            0%, 100% { opacity: 0.8; transform: scale(1); }
+            50% { opacity: 1; transform: scale(1.05); }
+        }
+        .animate-pulse-glow {
+            animation: pulse-glow 2s infinite ease-in-out;
+        }
+    </style>
+</head>
+<body class="h-screen w-screen flex flex-col justify-between items-center relative overflow-hidden bg-slate-950">
+
+    <!-- Video Element (Hidden - used for MediaPipe processing) -->
+    <video id="webcam-video" class="hidden" playsinline></video>
+
+    <!-- Canvas for Main AR Rendering (Webcam + Interactive Visuals) -->
+    <div class="relative w-full h-full flex items-center justify-center">
+        <canvas id="ar-canvas" class="w-full h-full object-cover mirror"></canvas>
+
+        <!-- Top HUD Panel -->
+        <div class="absolute top-4 left-4 right-4 flex justify-between items-start pointer-events-none z-20">
+            <!-- Health / Score & Level -->
+            <div class="glass-panel rounded-2xl p-4 flex items-center space-x-6">
+                <div>
+                    <div class="text-xs text-blue-400 font-cyber font-bold tracking-wider">LEVEL / มิติ</div>
+                    <div id="hud-level-text" class="text-2xl font-cyber font-extrabold text-white">มิติที่ 1: ทศนิยม 1 ตำแหน่ง</div>
+                </div>
+                <div class="h-8 w-px bg-slate-700"></div>
+                <div>
+                    <div class="text-xs text-yellow-400 font-cyber font-bold tracking-wider">SCORE / พลังงานผลึก</div>
+                    <div id="hud-score" class="text-2xl font-cyber font-extrabold text-yellow-400">0</div>
+                </div>
+                <div class="h-8 w-px bg-slate-700"></div>
+                <div>
+                    <div class="text-xs text-purple-400 font-cyber font-bold tracking-wider">COMBO</div>
+                    <div id="hud-combo" class="text-2xl font-cyber font-extrabold text-purple-400">x0</div>
+                </div>
+            </div>
+
+            <!-- Timer & Target Display -->
+            <div class="glass-panel rounded-2xl p-4 flex flex-col items-center min-w-[200px]">
+                <div class="text-xs text-emerald-400 font-cyber font-bold tracking-wider">เวลาที่เหลือ</div>
+                <div id="hud-timer" class="text-3xl font-cyber font-black text-emerald-400">00:30</div>
+            </div>
+        </div>
+
+        <!-- Center Prompt Box (Interactive Task Display) -->
+        <div id="equation-card" class="absolute top-24 left-1/2 -translate-x-1/2 glass-panel rounded-3xl p-6 flex flex-col items-center shadow-2xl border border-cyan-500/30 z-20 transition-all duration-300">
+            <div id="prompt-instruction" class="text-sm font-semibold text-cyan-300 mb-2 tracking-wide flex items-center gap-2">
+                <i class="fa-solid fa-hand-holding-hand animate-bounce"></i>
+                <span id="instruction-text">อ้าแขนกว้างและรวบมือเข้าหากันตรงกลางเพื่อบวกทศนิยม!</span>
+            </div>
+            
+            <!-- Mathematical Expression Display -->
+            <div class="flex items-center space-x-3 text-4xl sm:text-5xl font-cyber font-extrabold tracking-wider">
+                <span id="num1-display" class="text-cyan-400">1.2</span>
+                <span class="text-white">+</span>
+                <span id="num2-display" class="text-purple-400">2.3</span>
+                <span class="text-white">=</span>
+                <div id="target-box" class="min-w-[120px] px-4 py-2 border-2 border-dashed border-yellow-400 rounded-2xl text-yellow-300 bg-yellow-500/10 flex items-center justify-center animate-pulse-glow">
+                    ?
+                </div>
+            </div>
+
+            <!-- Color Coding Legend Guide -->
+            <div class="flex items-center space-x-4 mt-3 text-xs">
+                <div class="flex items-center space-x-1"><span class="w-3 h-3 rounded-full bg-blue-500 inline-block"></span><span class="text-slate-300">หลักหน่วย</span></div>
+                <div class="flex items-center space-x-1"><span class="w-3 h-3 rounded-full bg-yellow-400 inline-block"></span><span class="text-slate-300">จุดทศนิยม</span></div>
+                <div class="flex items-center space-x-1"><span class="w-3 h-3 rounded-full bg-emerald-500 inline-block"></span><span class="text-slate-300">หลักส่วนสิบ</span></div>
+                <div id="hundredths-legend" class="hidden items-center space-x-1"><span class="w-3 h-3 rounded-full bg-orange-500 inline-block"></span><span class="text-slate-300">หลักส่วนร้อย</span></div>
+            </div>
+        </div>
+
+        <!-- Gesture Guide Overlay / Action Alerts -->
+        <div id="gesture-toast" class="absolute bottom-10 left-1/2 -translate-x-1/2 glass-panel rounded-full px-8 py-3 text-lg font-bold text-white flex items-center space-x-3 z-20 opacity-0 transition-all duration-300 border border-yellow-400">
+            <i id="gesture-toast-icon" class="fa-solid fa-person-rays text-yellow-400 text-2xl"></i>
+            <span id="gesture-toast-text">ทำท่าทางเพื่อโต้ตอบ</span>
+        </div>
+
+        <!-- Mode Toggle / Controls Overlay -->
+        <div class="absolute bottom-4 right-4 flex space-x-3 z-20 pointer-events-auto">
+            <button id="btn-toggle-cam" class="glass-button text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center space-x-2">
+                <i class="fa-solid fa-camera"></i>
+                <span id="cam-status-text">ปิดกล้อง (สลับใช้เมาส์)</span>
+            </button>
+            <button id="btn-sound-toggle" class="glass-button text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center space-x-2">
+                <i class="fa-solid fa-volume-high"></i>
+                <span id="sound-status-text">เสียง: เปิด</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Start & Safety Calibration Modal -->
+    <div id="modal-start" class="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 flex items-center justify-center p-4">
+        <div class="max-w-2xl w-full glass-panel rounded-3xl p-8 flex flex-col items-center text-center space-y-6 border border-cyan-500/40 shadow-2xl relative overflow-hidden">
+            <div class="absolute -top-24 -left-24 w-48 h-48 bg-cyan-500/20 rounded-full blur-3xl"></div>
+            <div class="absolute -bottom-24 -right-24 w-48 h-48 bg-purple-500/20 rounded-full blur-3xl"></div>
+
+            <div class="w-20 h-20 bg-gradient-to-tr from-cyan-500 to-purple-600 rounded-3xl flex items-center justify-center text-4xl text-white shadow-lg shadow-cyan-500/30 animate-float">
+                <i class="fa-solid fa-shapes"></i>
+            </div>
+
+            <div>
+                <h1 class="text-3xl sm:text-4xl font-cyber font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-teal-300 to-purple-400">
+                    DECIMAL HERO AR
+                </h1>
+                <p class="text-sm text-cyan-200 mt-1 font-semibold">เจ้าแห่งทศนิยมพิชิตมิติ AR (Active Motion Learning)</p>
+            </div>
+
+            <div class="bg-slate-900/80 rounded-2xl p-5 text-left text-xs sm:text-sm text-slate-300 space-y-3 w-full border border-slate-800">
+                <div class="font-bold text-cyan-400 flex items-center space-x-2 text-base">
+                    <i class="fa-solid fa-shield-halved text-yellow-400"></i>
+                    <span>ข้อแนะนำและระบบความปลอดภัย (Safety Check)</span>
+                </div>
+                <ul class="list-disc list-inside space-y-1 text-slate-300">
+                    <li>จัดเตรียมพื้นที่เล่นอย่างน้อย <strong class="text-yellow-400">2 x 2 เมตร</strong> โดยไม่มีสิ่งกีดขวางรอบตัว</li>
+                    <li>วางกล้องให้อยู่ในระดับสายตา และรักษาระยะห่างจากกล้องประมาณ 1.5 - 2 เมตร</li>
+                    <li>ใช้ท่าทาง <strong class="text-cyan-400">"อ้าแขนแล้วหุบมือเข้าหากัน"</strong> เพื่อรวมทศนิยม</li>
+                    <li>เมื่อเกิดการทดทศนิยม ให้ใช้ท่า <strong class="text-emerald-400">"ดันมือขึ้นฟ้า (Punch Up)"</strong> เพื่อส่งตัวเลขทดขึ้นด้านบน</li>
+                </ul>
+            </div>
+
+            <div class="flex flex-col sm:flex-row gap-4 w-full">
+                <button id="btn-start-ar" class="flex-1 glass-button bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-bold py-4 rounded-2xl text-lg shadow-lg hover:shadow-cyan-500/50 flex items-center justify-center space-x-2">
+                    <i class="fa-solid fa-video"></i>
+                    <span>เปิดกล้องเริ่มเล่นแบบ AR</span>
+                </button>
+                <button id="btn-start-sim" class="flex-1 glass-button bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold py-4 rounded-2xl text-lg shadow-lg hover:shadow-purple-500/50 flex items-center justify-center space-x-2">
+                    <i class="fa-solid fa-mouse-pointer"></i>
+                    <span>เล่นแบบคลิก/สัมผัส (No Cam)</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Victory / Game Over Screen -->
+    <div id="modal-result" class="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 hidden flex-col items-center justify-center p-4">
+        <div class="max-w-lg w-full glass-panel rounded-3xl p-8 flex flex-col items-center text-center space-y-6 border border-yellow-500/40 shadow-2xl">
+            <div id="result-icon" class="w-24 h-24 bg-yellow-500/20 text-yellow-400 rounded-full flex items-center justify-center text-5xl">
+                <i class="fa-solid fa-trophy animate-bounce"></i>
+            </div>
+            
+            <div>
+                <h2 id="result-title" class="text-3xl font-cyber font-black text-yellow-400">ภารกิจสำเร็จ!</h2>
+                <p id="result-subtitle" class="text-sm text-slate-300 mt-2">คุณกอบกู้ผลึกพลังงานทศนิยมในอาณาจักรเดซิมาได้สำเร็จ</p>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4 w-full">
+                <div class="bg-slate-900/80 rounded-2xl p-4 border border-slate-800">
+                    <div class="text-xs text-slate-400">คะแนนพลังงานรวม</div>
+                    <div id="result-score" class="text-2xl font-cyber font-extrabold text-cyan-400">0</div>
+                </div>
+                <div class="bg-slate-900/80 rounded-2xl p-4 border border-slate-800">
+                    <div class="text-xs text-slate-400">คอมโบสูงสุด</div>
+                    <div id="result-combo" class="text-2xl font-cyber font-extrabold text-purple-400">x0</div>
+                </div>
+            </div>
+
+            <button id="btn-restart" class="w-full glass-button bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold py-4 rounded-2xl text-lg shadow-lg">
+                <i class="fa-solid fa-rotate-right mr-2"></i>เล่นอีกครั้ง
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const gameState = {
+            level: 1, // 1: Beginner, 2: Carry over, 3: 2 Decimals + Timer
+            score: 0,
+            combo: 0,
+            maxCombo: 0,
+            timeLeft: 30,
+            timerInterval: null,
+            soundEnabled: true,
+            cameraActive: false,
+            simulationMode: false,
+            currentQuestion: null,
+            userInputValue: null,
+            wristLeft: { x: 0, y: 0 },
+            wristRight: { x: 0, y: 0 },
+            shoulderDistance: 0,
+            carryRequired: false,
+            carryDone: false,
+            fusing: false,
+            particles: [],
+            crystals: []
+        };
+
+        // DOM elements
+        const videoElement = document.getElementById('webcam-video');
+        const canvasElement = document.getElementById('ar-canvas');
+        const ctx = canvasElement.getContext('2d');
+        
+        // Audio Synthesizer via Web Audio API
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        function playSound(type) {
+            if (!gameState.soundEnabled) return;
+            try {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+
+                const now = audioCtx.currentTime;
+                if (type === 'fuse') {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(300, now);
+                    osc.frequency.exponentialRampToValueAtTime(800, now + 0.3);
+                    gain.gain.setValueAtTime(0.3, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                    osc.start(now);
+                    osc.stop(now + 0.3);
+                } else if (type === 'correct') {
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(523.25, now); // C5
+                    osc.frequency.setValueAtTime(659.25, now + 0.1); // E5
+                    osc.frequency.setValueAtTime(783.99, now + 0.2); // G5
+                    gain.gain.setValueAtTime(0.2, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+                    osc.start(now);
+                    osc.stop(now + 0.4);
+                } else if (type === 'error') {
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(200, now);
+                    osc.frequency.setValueAtTime(140, now + 0.15);
+                    gain.gain.setValueAtTime(0.3, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                    osc.start(now);
+                    osc.stop(now + 0.3);
+                } else if (type === 'carry') {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(400, now);
+                    osc.frequency.exponentialRampToValueAtTime(1000, now + 0.4);
+                    gain.gain.setValueAtTime(0.2, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+                    osc.start(now);
+                    osc.stop(now + 0.4);
+                }
+            } catch (e) {
+                console.log('Audio playback error:', e);
+            }
+        }
+
+        // Text-to-Speech Engine
+        function speakPrompt(text) {
+            if (!gameState.soundEnabled || !('speechSynthesis' in window)) return;
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'th-TH';
+            utterance.rate = 1.0;
+            window.speechSynthesis.speak(utterance);
+        }
+
+        function generateQuestion() {
+            let num1, num2, answer, carryNeeded = false;
+
+            if (gameState.level === 1) {
+                // 1 Decimal place, no carry over (tenths sum < 10)
+                let aOnes = Math.floor(Math.random() * 5) + 1;
+                let bOnes = Math.floor(Math.random() * 4) + 1;
+                let aTenths = Math.floor(Math.random() * 5); // 0..4
+                let bTenths = Math.floor(Math.random() * (9 - aTenths)); // ensure sum < 10
+
+                num1 = parseFloat(`${aOnes}.${aTenths}`);
+                num2 = parseFloat(`${bOnes}.${bTenths}`);
+                answer = parseFloat((num1 + num2).toFixed(1));
+            } else if (gameState.level === 2) {
+                // 1 Decimal place, WITH carry over (tenths sum >= 10)
+                let aOnes = Math.floor(Math.random() * 4) + 1;
+                let bOnes = Math.floor(Math.random() * 4) + 1;
+                let aTenths = Math.floor(Math.random() * 5) + 5; // 5..9
+                let bTenths = Math.floor(Math.random() * 5) + 5; // 5..9
+
+                num1 = parseFloat(`${aOnes}.${aTenths}`);
+                num2 = parseFloat(`${bOnes}.${bTenths}`);
+                answer = parseFloat((num1 + num2).toFixed(1));
+                carryNeeded = true;
+            } else {
+                // 2 Decimal places
+                let aOnes = Math.floor(Math.random() * 3) + 1;
+                let bOnes = Math.floor(Math.random() * 3) + 1;
+                let aDec = Math.floor(Math.random() * 80) + 10;
+                let bDec = Math.floor(Math.random() * 80) + 10;
+
+                num1 = parseFloat(`${aOnes}.${aDec}`);
+                num2 = parseFloat(`${bOnes}.${bDec}`);
+                answer = parseFloat((num1 + num2).toFixed(2));
+                if ((aDec % 10 + bDec % 10 >= 10) || (Math.floor(aDec/10) + Math.floor(bDec/10) >= 10)) {
+                    carryNeeded = true;
+                }
+            }
+
+            gameState.currentQuestion = { num1, num2, answer };
+            gameState.carryRequired = carryNeeded;
+            gameState.carryDone = !carryNeeded;
+
+            // Generate answer choices for selection
+            const wrongOptions = [
+                parseFloat((answer + 0.1).toFixed(2)),
+                parseFloat((answer - 0.2).toFixed(2)),
+                parseFloat((answer + 1.0).toFixed(2))
+            ].filter(v => v > 0 && v !== answer);
+
+            const options = [answer, wrongOptions[0] || answer + 0.3, wrongOptions[1] || answer - 0.1];
+            options.sort(() => Math.random() - 0.5);
+
+            createCrystals(options);
+            updateUIForQuestion();
+        }
+
+        function createCrystals(options) {
+            gameState.crystals = [];
+            const w = canvasElement.width || 800;
+            const h = canvasElement.height || 600;
+
+            const positions = [
+                { x: w * 0.25, y: h * 0.65 },
+                { x: w * 0.50, y: h * 0.70 },
+                { x: w * 0.75, y: h * 0.65 }
+            ];
+
+            options.forEach((val, idx) => {
+                gameState.crystals.push({
+                    val: val,
+                    x: positions[idx].x,
+                    y: positions[idx].y,
+                    radius: 45,
+                    color: idx === 0 ? '#3b82f6' : idx === 1 ? '#a855f7' : '#ec4899',
+                    isTarget: val === gameState.currentQuestion.answer
+                });
+            });
+        }
+
+        function updateUIForQuestion() {
+            const q = gameState.currentQuestion;
+            document.getElementById('num1-display').innerText = q.num1;
+            document.getElementById('num2-display').innerText = q.num2;
+            document.getElementById('target-box').innerText = '?';
+
+            let instrText = "อ้าแขนและหุบมือเข้าหากันเพื่อรวมพลังทศนิยม!";
+            if (gameState.carryRequired && !gameState.carryDone) {
+                instrText = "ทศนิยมรวมกันได้เกิน 1! ต่อย/ดันมือขึ้นฟ้าเพื่อทดไปหลักหน่วย!";
+            }
+            document.getElementById('instruction-text').innerText = instrText;
+            speakPrompt(`${q.num1} บวก ${q.num2} เท่ากับเท่าไร?`);
+        }
+
+        function triggerParticles(x, y, color) {
+            for (let i = 0; i < 30; i++) {
+                gameState.particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 12,
+                    vy: (Math.random() - 0.5) * 12,
+                    life: 1.0,
+                    color: color || '#facc15',
+                    size: Math.random() * 6 + 3
+                });
+            }
+        }
+
+        function updateParticles() {
+            for (let i = gameState.particles.length - 1; i >= 0; i--) {
+                const p = gameState.particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 0.03;
+                if (p.life <= 0) {
+                    gameState.particles.splice(i, 1);
+                }
+            }
+        }
+
+        function drawParticles() {
+            gameState.particles.forEach(p => {
+                ctx.save();
+                ctx.globalAlpha = p.life;
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            });
+        }
+
+        function onPoseResults(results) {
+            // Resize Canvas to fit container window
+            if (canvasElement.width !== canvasElement.clientWidth || canvasElement.height !== canvasElement.clientHeight) {
+                canvasElement.width = canvasElement.clientWidth;
+                canvasElement.height = canvasElement.clientHeight;
+            }
+
+            ctx.save();
+            ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+            // Draw Video Feed if Camera Active
+            if (results.image && gameState.cameraActive) {
+                ctx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+            } else {
+                // Cyber Dark Background Grid for Simulation Mode
+                ctx.fillStyle = '#090d16';
+                ctx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+
+                // Draw Grid lines
+                ctx.strokeStyle = 'rgba(56, 189, 248, 0.1)';
+                ctx.lineWidth = 1;
+                const gridSize = 40;
+                for (let x = 0; x < canvasElement.width; x += gridSize) {
+                    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvasElement.height); ctx.stroke();
+                }
+                for (let y = 0; y < canvasElement.height; y += gridSize) {
+                    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvasElement.width, y); ctx.stroke();
+                }
+            }
+
+            // Render Spatial Alignment Grid (Educational Visual Alignment for Ones, Tenths)
+            drawDecimalAlignmentGrid();
+
+            // Process Skeleton Pose Landmarks
+            if (results.poseLandmarks) {
+                const landmarks = results.poseLandmarks;
+                const w = canvasElement.width;
+                const h = canvasElement.height;
+
+                // Extract Key Joint Coordinates
+                const leftWrist = { x: landmarks[15].x * w, y: landmarks[15].y * h };
+                const rightWrist = { x: landmarks[16].x * w, y: landmarks[16].y * h };
+                const leftShoulder = { x: landmarks[11].x * w, y: landmarks[11].y * h };
+                const rightShoulder = { x: landmarks[12].x * w, y: landmarks[12].y * h };
+                const nose = { x: landmarks[0].x * w, y: landmarks[0].y * h };
+
+                gameState.wristLeft = leftWrist;
+                gameState.wristRight = rightWrist;
+
+                // Draw Skeleton Avatar Mesh
+                drawSkeletonMesh(landmarks, w, h);
+
+                // Check Gesture 1: Punch/Push Up (Carry Over)
+                if (gameState.carryRequired && !gameState.carryDone) {
+                    if (leftWrist.y < leftShoulder.y - 50 || rightWrist.y < rightShoulder.y - 50) {
+                        gameState.carryDone = true;
+                        playSound('carry');
+                        showToast('ทด 1 ขึ้นไปที่หลักหน่วยเรียบร้อย!', 'fa-arrow-up');
+                        triggerParticles(nose.x, leftShoulder.y - 80, '#22c55e');
+                        updateUIForQuestion();
+                    }
+                }
+
+                // Check Gesture 2: Fusion Clasp (Both Hands Clapped Together in Center)
+                const handDistance = Math.hypot(leftWrist.x - rightWrist.x, leftWrist.y - rightWrist.y);
+                if (handDistance < 70 && !gameState.fusing) {
+                    gameState.fusing = true;
+                    setTimeout(() => { gameState.fusing = false; }, 1000);
+
+                    // Find nearest crystal tapped
+                    const handCenterX = (leftWrist.x + rightWrist.x) / 2;
+                    const handCenterY = (leftWrist.y + rightWrist.y) / 2;
+                    checkCrystalSelection(handCenterX, handCenterY);
+                }
+            }
+
+            // Draw Floating AR Crystals
+            drawCrystals();
+
+            // Draw Particles
+            updateParticles();
+            drawParticles();
+
+            ctx.restore();
+        }
+
+        function drawDecimalAlignmentGrid() {
+            const w = canvasElement.width;
+            const h = canvasElement.height;
+            const q = gameState.currentQuestion;
+            if (!q) return;
+
+            // Draw Virtual Grid Columns in World-Space AR
+            ctx.save();
+            ctx.lineWidth = 2;
+            ctx.setLineDash([6, 6]);
+
+            // Ones Place Column (Blue)
+            ctx.strokeStyle = 'rgba(59, 130, 246, 0.4)';
+            ctx.fillStyle = 'rgba(59, 130, 246, 0.05)';
+            ctx.fillRect(w * 0.2, h * 0.15, w * 0.25, h * 0.3);
+            ctx.strokeRect(w * 0.2, h * 0.15, w * 0.25, h * 0.3);
+
+            // Decimal Point Separator Line (Yellow)
+            ctx.strokeStyle = 'rgba(234, 179, 8, 0.8)';
+            ctx.beginPath();
+            ctx.moveTo(w * 0.5, h * 0.12);
+            ctx.lineTo(w * 0.5, h * 0.48);
+            ctx.stroke();
+
+            // Tenths Place Column (Green)
+            ctx.strokeStyle = 'rgba(34, 197, 94, 0.4)';
+            ctx.fillStyle = 'rgba(34, 197, 94, 0.05)';
+            ctx.fillRect(w * 0.55, h * 0.15, w * 0.25, h * 0.3);
+            ctx.strokeRect(w * 0.55, h * 0.15, w * 0.25, h * 0.3);
+
+            ctx.restore();
+        }
+
+        function drawSkeletonMesh(landmarks, w, h) {
+            ctx.save();
+            ctx.strokeStyle = '#38bdf8';
+            ctx.lineWidth = 4;
+            ctx.fillStyle = '#38bdf8';
+
+            // Key connections
+            const connections = [
+                [11, 12], [11, 13], [13, 15],
+                [12, 14], [14, 16], [11, 23], [12, 24]
+            ];
+
+            connections.forEach(([i, j]) => {
+                if (landmarks[i] && landmarks[j]) {
+                    ctx.beginPath();
+                    ctx.moveTo(landmarks[i].x * w, landmarks[i].y * h);
+                    ctx.lineTo(landmarks[j].x * w, landmarks[j].y * h);
+                    ctx.stroke();
+                }
+            });
+
+            // Glowing Hands Indicators
+            [15, 16].forEach(idx => {
+                if (landmarks[idx]) {
+                    ctx.fillStyle = '#facc15';
+                    ctx.beginPath();
+                    ctx.arc(landmarks[idx].x * w, landmarks[idx].y * h, 14, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.lineWidth = 3;
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.stroke();
+                }
+            });
+
+            ctx.restore();
+        }
+
+        function drawCrystals() {
+            gameState.crystals.forEach(c => {
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(c.x, c.y, c.radius, 0, Math.PI * 2);
+                
+                // Hexagon/Crystal style fill
+                const grad = ctx.createRadialGradient(c.x, c.y, 5, c.x, c.y, c.radius);
+                grad.addColorStop(0, '#ffffff');
+                grad.addColorStop(0.5, c.color);
+                grad.addColorStop(1, '#0f172a');
+                
+                ctx.fillStyle = grad;
+                ctx.shadowColor = c.color;
+                ctx.shadowBlur = 20;
+                ctx.fill();
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = '#ffffff';
+                ctx.stroke();
+
+                // Number text
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 24px "Chakra Petch", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(c.val, c.x, c.y);
+
+                ctx.restore();
+            });
+        }
+
+        function checkCrystalSelection(x, y) {
+            if (!gameState.carryDone) {
+                showToast('ต้องต่อย/ดันมือขึ้นฟ้าเพื่อทดเลขก่อน!', 'fa-triangle-exclamation');
+                playSound('error');
+                return;
+            }
+
+            gameState.crystals.forEach(c => {
+                const dist = Math.hypot(x - c.x, y - c.y);
+                if (dist < c.radius + 30) {
+                    if (c.isTarget) {
+                        // Correct Answer
+                        playSound('correct');
+                        triggerParticles(c.x, c.y, '#22c55e');
+                        gameState.score += 100 + (gameState.combo * 20);
+                        gameState.combo += 1;
+                        if (gameState.combo > gameState.maxCombo) gameState.maxCombo = gameState.combo;
+
+                        document.getElementById('hud-score').innerText = gameState.score;
+                        document.getElementById('hud-combo').innerText = `x${gameState.combo}`;
+                        document.getElementById('target-box').innerText = c.val;
+
+                        showToast('ถูกต้อง! สมดุลพลังงานคืนสู่ปกติ', 'fa-circle-check');
+
+                        setTimeout(() => {
+                            generateQuestion();
+                        }, 1200);
+                    } else {
+                        // Wrong Answer
+                        playSound('error');
+                        triggerParticles(c.x, c.y, '#ef4444');
+                        gameState.combo = 0;
+                        document.getElementById('hud-combo').innerText = 'x0';
+                        showToast('คำตอบยังไม่ถูกต้อง ลองสังเกตหลักทศนิยมดูอีกครั้ง', 'fa-xmark');
+                    }
+                }
+            });
+        }
+
+        function showToast(text, iconClass) {
+            const toast = document.getElementById('gesture-toast');
+            const toastText = document.getElementById('gesture-toast-text');
+            const toastIcon = document.getElementById('gesture-toast-icon');
+
+            toastText.innerText = text;
+            toastIcon.className = `fa-solid ${iconClass || 'fa-info-circle'} text-yellow-400 text-2xl`;
+            toast.style.opacity = '1';
+
+            setTimeout(() => {
+                toast.style.opacity = '0';
+            }, 2500);
+        }
+
+        function startTimer() {
+            clearInterval(gameState.timerInterval);
+            gameState.timeLeft = 30;
+            document.getElementById('hud-timer').innerText = `00:${gameState.timeLeft < 10 ? '0' : ''}${gameState.timeLeft}`;
+
+            gameState.timerInterval = setInterval(() => {
+                gameState.timeLeft--;
+                document.getElementById('hud-timer').innerText = `00:${gameState.timeLeft < 10 ? '0' : ''}${gameState.timeLeft}`;
+
+                if (gameState.timeLeft <= 0) {
+                    clearInterval(gameState.timerInterval);
+                    endGame();
+                }
+            }, 1000);
+        }
+
+        function endGame() {
+            document.getElementById('modal-result').classList.remove('hidden');
+            document.getElementById('modal-result').classList.add('flex');
+            document.getElementById('result-score').innerText = gameState.score;
+            document.getElementById('result-combo').innerText = `x${gameState.maxCombo}`;
+            speakPrompt(`จบการทดสอบ คุณทำคะแนนได้ ${gameState.score} คะแนน`);
+        }
+
+        let camera = null;
+        let pose = null;
+
+        function initPoseTracker() {
+            pose = new Pose({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+            });
+
+            pose.setOptions({
+                modelComplexity: 1,
+                smoothLandmarks: true,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+
+            pose.onResults(onPoseResults);
+
+            camera = new Camera(videoElement, {
+                onFrame: async () => {
+                    if (gameState.cameraActive) {
+                        await pose.send({ image: videoElement });
+                    }
+                },
+                width: 1280,
+                height: 720
+            });
+        }
+
+        document.getElementById('btn-start-ar').addEventListener('click', async () => {
+            document.getElementById('modal-start').classList.add('hidden');
+            gameState.cameraActive = true;
+            gameState.simulationMode = false;
+
+            try {
+                if (!pose) initPoseTracker();
+                await camera.start();
+            } catch (err) {
+                console.warn("Camera failed to start, switching to simulation mode:", err);
+                gameState.cameraActive = false;
+                gameState.simulationMode = true;
+                showToast("ไม่พบกล้อง เปลี่ยนเป็นโหมดคลิกเพื่อเล่น", "fa-mouse");
+            }
+
+            generateQuestion();
+            startTimer();
+        });
+
+        document.getElementById('btn-start-sim').addEventListener('click', () => {
+            document.getElementById('modal-start').classList.add('hidden');
+            gameState.cameraActive = false;
+            gameState.simulationMode = true;
+
+            // Start loop manually for simulation mode
+            function renderSimLoop() {
+                onPoseResults({ poseLandmarks: null, image: null });
+                requestAnimationFrame(renderSimLoop);
+            }
+            renderSimLoop();
+
+            generateQuestion();
+            startTimer();
+        });
+
+        // Mouse / Touch Canvas Click Handler for Simulation Mode
+        canvasElement.addEventListener('click', (e) => {
+            const rect = canvasElement.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+
+            // If carry required in sim mode, allow clicking top prompt to execute carry
+            if (gameState.carryRequired && !gameState.carryDone) {
+                gameState.carryDone = true;
+                playSound('carry');
+                showToast('ทด 1 ขึ้นไปที่หลักหน่วยเรียบร้อย!', 'fa-arrow-up');
+                updateUIForQuestion();
+                return;
+            }
+
+            checkCrystalSelection(clickX, clickY);
+        });
+
+        document.getElementById('btn-toggle-cam').addEventListener('click', () => {
+            gameState.cameraActive = !gameState.cameraActive;
+            document.getElementById('cam-status-text').innerText = gameState.cameraActive ? "เปิดกล้องอยู่" : "ปิดกล้อง (สลับใช้เมาส์)";
+        });
+
+        document.getElementById('btn-sound-toggle').addEventListener('click', () => {
+            gameState.soundEnabled = !gameState.soundEnabled;
+            document.getElementById('sound-status-text').innerText = gameState.soundEnabled ? "เสียง: เปิด" : "เสียง: ปิด";
+        });
+
+        document.getElementById('btn-restart').addEventListener('click', () => {
+            document.getElementById('modal-result').classList.add('hidden');
+            document.getElementById('modal-result').classList.remove('flex');
+            gameState.score = 0;
+            gameState.combo = 0;
+            gameState.maxCombo = 0;
+            document.getElementById('hud-score').innerText = '0';
+            document.getElementById('hud-combo').innerText = 'x0';
+            generateQuestion();
+            startTimer();
+        });
+
+        // Window Resize Listener
+        window.addEventListener('resize', () => {
+            canvasElement.width = canvasElement.clientWidth;
+            canvasElement.height = canvasElement.clientHeight;
+        });
+    </script>
+</body>
+</html>
